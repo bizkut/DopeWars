@@ -281,7 +281,7 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
     .filter('money', function () {
         return formatMoney;
     })
-    .controller('DopeController', ['$scope', '$document', '$window', '$sce', '$interval', '$timeout', '$animate', function ($scope, $document, $window, $sce, $interval, $timeout, $animate) {
+    .controller('DopeController', ['$scope', '$document', '$window', '$sce', '$interval', '$timeout', '$animate', '$http', function ($scope, $document, $window, $sce, $interval, $timeout, $animate, $http) {
 
         var lastUpdate = 0;
         var lastSaved = 0;
@@ -290,6 +290,20 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
         var timeOneSecond = 0;
 
         $scope.log = [];
+
+        // Auth related scope variables
+        $scope.regData = {};
+        $scope.loginData = {};
+        $scope.isAuthenticated = false;
+        $scope.currentUser = {};
+        $scope.regError = '';
+        $scope.loginError = '';
+        $scope.testApiMessage = '';
+        $scope.testApiError = false;
+
+        // Leaderboard related scope variables
+        $scope.leaderboardData = [];
+        $scope.leaderboardError = '';
 
         $scope.gameModel = new GameModel();
 		$scope.prestigeDealers = [];
@@ -471,21 +485,110 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
             return producers;
         };
 
+        // readFromCookie remains as a fallback for non-authenticated or initial load.
         function readFromCookie() {
+            console.log("readFromCookie (localStorage) called");
             if (typeof (Storage) == "undefined") {
+                $scope.gameModel = new GameModel();
+                $scope.prestigeDealers = [];
                 return;
             }
             if (localStorage.getItem("gameModel") !== null) $scope.gameModel = JSON.parse(localStorage.getItem("gameModel"));
-			if (localStorage.getItem("prestigeDealers") !== null) $scope.prestigeDealers = JSON.parse(localStorage.getItem("prestigeDealers"));
+			else $scope.gameModel = new GameModel();
+            if (localStorage.getItem("prestigeDealers") !== null) $scope.prestigeDealers = JSON.parse(localStorage.getItem("prestigeDealers"));
+			else $scope.prestigeDealers = [];
         }
 
+        // Modified writeToCookie to prioritize server save if authenticated
         function writeToCookie() {
+            if ($scope.isAuthenticated) {
+                $scope.saveGameStateToServer();
+                return; 
+            }
+            // Fallback to localStorage if not authenticated
+            console.log("writeToCookie (localStorage) called because user is not authenticated.");
             if (typeof (Storage) == "undefined") {
                 return;
             }
             localStorage.setItem("gameModel", JSON.stringify($scope.gameModel));
 			localStorage.setItem("prestigeDealers", JSON.stringify($scope.prestigeDealers));
         }
+
+        // New function to save game state to server
+        $scope.saveGameStateToServer = function() {
+            if (!$scope.isAuthenticated) {
+                // console.log("User not authenticated. Skipping save to server.");
+                return;
+            }
+            var token = localStorage.getItem('dopewarsToken');
+            if (!token) {
+                console.error('No token found, cannot save game state to server.');
+                return;
+            }
+
+            var gameState = {
+                gameModel: $scope.gameModel,
+                prestigeDealers: $scope.prestigeDealers
+            };
+
+            $http.post('/api/game/save', gameState, { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(function(response) {
+                    console.log('Game state saved successfully to server:', response.data.message);
+                }, function(error) {
+                    console.error('Error saving game state to server:', error);
+                });
+        };
+
+        // New function to load game state from server
+        $scope.loadGameStateFromServer = function() {
+            if (!$scope.isAuthenticated) {
+                console.log("User not authenticated. Skipping load from server.");
+                // Fallback or initialization for non-authenticated users:
+                // For now, we rely on checkAuthStatus to handle this.
+                return;
+            }
+            var token = localStorage.getItem('dopewarsToken');
+            if (!token) {
+                console.error('No token found, cannot load game state from server.');
+                // Initialize a new game if no token for some reason
+                $scope.gameModel = new GameModel();
+                $scope.prestigeDealers = [];
+                $scope.calculateAvailableUpgrades();
+                $scope.updateDealerDrugIndex();
+                $(window).trigger('resize');
+                return;
+            }
+
+            console.log("Attempting to load game state from server...");
+            $http.get('/api/game/load', { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(function(response) {
+                    console.log("Loaded game state from server:", response.data);
+                    if (response.data && response.data.gameModel) {
+                        $scope.gameModel = response.data.gameModel;
+                        $scope.prestigeDealers = response.data.prestigeDealers || [];
+                        console.log("Game model and prestige dealers updated from server.");
+                    } else {
+                        // No saved game state on server, or empty/invalid response
+                        console.log("No valid game state on server, initializing new game.");
+                        $scope.gameModel = new GameModel();
+                        $scope.prestigeDealers = [];
+                    }
+                    // Common post-load setup
+                    $scope.calculateAvailableUpgrades();
+                    $scope.updateDealerDrugIndex();
+                    $(window).trigger('resize'); // Ensure UI updates
+                    console.log("Game state processed and UI helpers called.");
+                }, function(error) {
+                    console.error('Error loading game state from server:', error);
+                    // Fallback to a new game state on error
+                    console.log("Error loading from server, initializing new game.");
+                    $scope.gameModel = new GameModel();
+                    $scope.prestigeDealers = [];
+                    $scope.calculateAvailableUpgrades();
+                    $scope.updateDealerDrugIndex();
+                    $(window).trigger('resize');
+                });
+        };
 
         $scope.drugMadePerSecond = function(drug) {
             var producers = $scope.producersForDrug(drug);
@@ -506,7 +609,18 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
 
         $scope.resetGame = function () {
 			localStorage.removeItem('gameModel');
-            window.location.reload();
+            localStorage.removeItem('prestigeDealers'); // Clear local storage
+            $scope.gameModel = new GameModel(); // Reset in-scope model
+            $scope.prestigeDealers = [];
+            
+            $scope.calculateAvailableUpgrades();
+            $scope.updateDealerDrugIndex();
+            $(window).trigger('resize');
+
+            if ($scope.isAuthenticated) {
+                $scope.saveGameStateToServer(); // Save fresh state to server if authenticated
+            }
+            window.location.reload(); // Reload the page
         };
 
         $scope.selectDrug = function (drug) {
@@ -780,6 +894,8 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
 			$scope.updateDealerDrugIndex();
 			prestigeDealerUpgrade.price = 5000000 * Math.pow(1.4, $scope.prestigeDealers.length);
             $interval(update, 200);
+            checkAuthStatus(); // Check authentication status on page load
+            $scope.loadLeaderboard(); // Load leaderboard on initial load
         });
 		
 		$scope.prestigeDealerConfirm = function() {
@@ -792,8 +908,17 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
 				prestigeDealer.originalVolume = 1.5;
 				prestigeDealer.type= 'Prestige';
 				$scope.prestigeDealers.push(prestigeDealer);
-				localStorage.removeItem('gameModel');
-				localStorage.setItem("prestigeDealers", JSON.stringify($scope.prestigeDealers));
+				
+                // Reset gameModel, prestigeDealers are kept
+                $scope.gameModel = new GameModel();
+
+                if($scope.isAuthenticated){
+                    $scope.saveGameStateToServer(); // Save new state with new prestige dealer
+                } else {
+                    // Fallback to local storage if not authenticated (though prestige usually implies auth)
+                    localStorage.removeItem('gameModel'); // Remove old game model
+                    localStorage.setItem("prestigeDealers", JSON.stringify($scope.prestigeDealers));
+                }
 				window.location.reload();
 			}
 			$('#prestigeDealerModal').modal('hide');
@@ -802,5 +927,124 @@ angular.module('dopewarsremakeApp', ['ngSanitize', 'ngAnimate','jg.progressbar']
 		$scope.prestigeDealerCancel = function(){
 			$('#prestigeDealerModal').modal('hide');
 		};
+
+        // --- Auth Functions ---
+        $scope.registerUser = function() {
+            $scope.regError = '';
+            $http.post('/api/auth/register', $scope.regData)
+                .then(function(response) {
+                    // Optionally login directly or show success message
+                    $window.alert('Registration successful! Please login.');
+                    $scope.regData = {}; // Clear form
+                }, function(error) {
+                    $scope.regError = error.data.message || 'Registration failed.';
+                });
+        };
+
+        $scope.loginUser = function() {
+            $scope.loginError = '';
+            $http.post('/api/auth/login', $scope.loginData)
+                .then(function(response) {
+                    localStorage.setItem('dopewarsToken', response.data.token);
+                    $scope.isAuthenticated = true;
+                    // Decode token or fetch user data
+                    // For simplicity, just using username from login form for now
+                    // In a real app, decode JWT to get user info
+                    const tokenPayload = JSON.parse(atob(response.data.token.split('.')[1]));
+                    $scope.currentUser = { username: tokenPayload.username, userId: tokenPayload.userId };
+                    $scope.loginData = {}; // Clear form
+                    $scope.loginError = '';
+                    $scope.testApiMessage = '';
+                    $scope.loadGameStateFromServer(); // Load game state after successful login
+                }, function(error) {
+                    $scope.loginError = error.data.message || 'Login failed.';
+                    $scope.isAuthenticated = false;
+                    $scope.currentUser = {};
+                });
+        };
+
+        $scope.logoutUser = function() {
+            localStorage.removeItem('dopewarsToken');
+            $scope.isAuthenticated = false;
+            $scope.currentUser = {};
+            $scope.testApiMessage = '';
+            // Reset game state on logout
+            $scope.gameModel = new GameModel();
+            $scope.prestigeDealers = [];
+            $scope.calculateAvailableUpgrades();
+            $scope.updateDealerDrugIndex();
+            $(window).trigger('resize');
+        };
+
+        function checkAuthStatus() {
+            var token = localStorage.getItem('dopewarsToken');
+            if (token) {
+                const tokenPayload = JSON.parse(atob(token.split('.')[1]));
+                if (tokenPayload.exp * 1000 > Date.now()) {
+                    $scope.isAuthenticated = true;
+                    $scope.currentUser = { username: tokenPayload.username, userId: tokenPayload.userId };
+                    $scope.loadGameStateFromServer(); // Load game state if authenticated
+                } else {
+                    // Token expired
+                    localStorage.removeItem('dopewarsToken');
+                    $scope.isAuthenticated = false;
+                    $scope.currentUser = {};
+                    // Initialize new game if token expired
+                    $scope.gameModel = new GameModel();
+                    $scope.prestigeDealers = [];
+                    $scope.calculateAvailableUpgrades();
+                    $scope.updateDealerDrugIndex();
+                    $(window).trigger('resize');
+                }
+            } else {
+                // Not authenticated, initialize new game state
+                // (or could call readFromCookie() if we want to load from localStorage for non-logged-in users)
+                $scope.gameModel = new GameModel();
+                $scope.prestigeDealers = [];
+                $scope.calculateAvailableUpgrades();
+                $scope.updateDealerDrugIndex();
+                $(window).trigger('resize');
+            }
+        }
+
+        $scope.callTestApi = function() {
+            var token = localStorage.getItem('dopewarsToken');
+            $scope.testApiMessage = '';
+            $scope.testApiError = false;
+
+            if (!token) {
+                $scope.testApiMessage = 'You are not logged in.';
+                $scope.testApiError = true;
+                return;
+            }
+
+            $http.get('/api/test', { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(function(response) {
+                    $scope.testApiMessage = 'API Test successful: ' + response.data.message + ' (User: ' + response.data.user.username + ')';
+                    $scope.testApiError = false;
+                }, function(error) {
+                    $scope.testApiMessage = 'API Test failed: ' + (error.data.message || error.statusText);
+                    $scope.testApiError = true;
+                    if (error.status === 401 || error.status === 403) {
+                        // Token might be invalid or expired, log out user
+                        $scope.logoutUser();
+                    }
+                });
+        };
+        // --- End Auth Functions ---
+
+        // --- Leaderboard Function ---
+        $scope.loadLeaderboard = function() {
+            $scope.leaderboardError = ''; // Clear previous errors
+            $http.get('/api/leaderboard')
+                .then(function(response) {
+                    $scope.leaderboardData = response.data;
+                }, function(error) {
+                    console.error('Error loading leaderboard:', error);
+                    $scope.leaderboardError = 'Failed to load leaderboard. Please try again.';
+                    $scope.leaderboardData = []; // Clear any old data
+                });
+        };
+        // --- End Leaderboard Function ---
 
     }]);
