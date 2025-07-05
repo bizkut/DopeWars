@@ -1,0 +1,31 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "mocha test/**/*.test.js --exit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bizkut/DopeWars.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/bizkut/DopeWars/issues"
+  },
+  "homepage": "https://github.com/bizkut/DopeWars#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "chai": "^5.2.0",
+    "mocha": "^11.5.0",
+    "supertest": "^7.1.1"
+  }
+}
