@@ -1,6 +1,7 @@
 const request = require('supertest');
 const expect = require('chai').expect;
 const app = require('../server'); // Assuming server.js exports the app
+const { initDb, User } = require('../database'); // Import initDb and User model
 
 describe('Game API', () => {
     let authToken;
@@ -24,30 +25,53 @@ describe('Game API', () => {
         prestigeDealers: []
     };
 
-    before((done) => {
+    before(async () => {
+        // Initialize DB and clear tables
+        await initDb({ force: true, quiet: true });
+
         // Register and login the user to get a token
-        request(app)
-            .post('/api/auth/register')
-            .send(userCredentials)
-            .end((err, res) => {
-                if (res.statusCode === 201 || res.statusCode === 400) { // User might already exist from previous test runs
-                    request(app)
-                        .post('/api/auth/login')
-                        .send(userCredentials)
-                        .end((err, resLogin) => {
-                            expect(resLogin.statusCode).to.equal(200);
-                            expect(resLogin.body.token).to.be.a('string');
-                            authToken = resLogin.body.token;
-                            // Decode token to get userId (simplified - real decoding would be more robust)
-                            const payload = JSON.parse(Buffer.from(authToken.split('.')[1], 'base64').toString());
-                            userId = payload.userId;
-                            done();
-                        });
-                } else {
-                    done(err || new Error('Registration failed in test setup'));
+        try {
+            let res = await request(app)
+                .post('/api/auth/register')
+                .send(userCredentials);
+
+            // If user already exists (400), or successfully created (201), proceed to login
+            if (res.statusCode === 201 || res.statusCode === 400) {
+                const resLogin = await request(app)
+                    .post('/api/auth/login')
+                    .send(userCredentials);
+
+                if (resLogin.statusCode !== 200) {
+                    throw new Error(`Login failed in test setup: ${resLogin.body.message || resLogin.statusCode}`);
                 }
-            });
+                expect(resLogin.body.token).to.be.a('string');
+                authToken = resLogin.body.token;
+                // Decode token to get userId
+                const payload = JSON.parse(Buffer.from(authToken.split('.')[1], 'base64').toString());
+                userId = payload.userId;
+            } else {
+                throw new Error(`Registration failed in test setup: ${res.body.message || res.statusCode}`);
+            }
+        } catch (error) {
+            // This will propagate the error to Mocha, failing the before hook
+            console.error("Error in Game API before hook:", error);
+            throw error;
+        }
     });
+
+    // This beforeEach will run before each test in the "Game API" suite,
+    // ensuring that the 'gametestuser' has a known state (e.g., no game data)
+    // unless a specific test modifies it.
+    beforeEach(async () => {
+        // Optionally, reset specific user's game state if needed, or clear all game states
+        // For now, we'll rely on tests being independent or setting up their own specific states.
+        // If tests interfere, we might need to clear User table or update specific user.
+        // Example: await User.update({ gameState: null }, { where: { id: userId } });
+        // Or, if a test needs a completely fresh DB: await initDb({ force: true, quiet: true });
+        // For now, the main `before` hook does a full reset.
+        // The leaderboard test creates its own users, so it needs a clean slate for those.
+    });
+
 
     describe('POST /api/game/save', () => {
         it('should save game state for an authenticated user', (done) => {

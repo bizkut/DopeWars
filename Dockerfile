@@ -7,8 +7,11 @@ WORKDIR /app
 # Copy package.json and package-lock.json (if available)
 COPY package*.json ./
 
+# Install build dependencies for sqlite3 and other native modules on Alpine
+RUN apk add --no-cache python3 make g++
+
 # Install app dependencies
-RUN npm install
+RUN npm install --include=dev
 
 # Copy the rest of the application code
 COPY . .

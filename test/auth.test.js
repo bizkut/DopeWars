@@ -1,30 +1,31 @@
 const request = require('supertest');
 const expect = require('chai').expect;
 const app = require('../server'); // Assuming server.js exports the app
-
-// In-memory store for tokens, etc., if needed across tests, or clear users array
-let usersForTest = []; // This is a local reference to the users array for cleanup
+const { initDb } = require('../database'); // Import initDb
 
 describe('Authentication API', () => {
     
-    beforeEach(() => {
-        // Clear the users array in the server before each test
-        // This is a bit of a hack for in-memory. Ideally, server would have a reset method.
-        // For now, we'll manage a local copy or assume server.js `users` can be cleared.
-        // Accessing and clearing server's `users` array directly is not clean.
-        // Let's assume for now the server starts fresh or tests manage their own sequence.
-        // For a real scenario: app.users = []; or a dedicated endpoint /test/reset
-        // Since direct modification is tricky, tests will run sequentially and be aware of previous state.
-        // OR, we can try to ensure the server's users array is cleared if it's exposed for tests.
-        // If server.js did `module.exports = { app, users }`, we could do:
-        // const server = require('../server'); server.users.length = 0;
-        // For this exercise, we'll design tests to be as independent as possible or run in sequence.
-        // Let's try to fetch the users array from the app if possible, or just rely on fresh server runs.
-        // For now, we'll rely on the tests not to interfere too much or to clean up after themselves if they add users.
-        // Best approach for now: run tests that don't depend on a clean slate first, or register unique users.
+    before(async () => {
+        // Initialize the database and clear tables before running tests
+        await initDb({ force: true, quiet: true });
     });
 
+    // We will also use beforeEach to ensure a clean state for tests that create specific users
+    // and might conflict if run in a different order or if a previous test failed.
+    // For some tests (like 'username already exists'), we need state from a previous action within the same test.
+    // So, a global `beforeEach` with `force: true` might be too aggressive for all tests.
+    // We'll apply it selectively or ensure tests clean up or use unique data.
+    // For now, a single `before` for the whole suite. Individual test blocks might need more specific setup.
+
     describe('POST /api/auth/register', () => {
+        // It's good practice to ensure a clean slate before tests that register users,
+        // especially if usernames need to be unique.
+        beforeEach(async () => {
+            // This will clear the User table before each registration test
+            // to prevent conflicts from 'testuser1', 'testuser2' etc.
+            await initDb({ force: true, quiet: true });
+        });
+
         it('should register a new user successfully', (done) => {
             request(app)
                 .post('/api/auth/register')
