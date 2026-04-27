@@ -180,9 +180,9 @@ describe('Game API', () => {
         it('should return leaderboard data with correct fields and sorted', (done) => {
             // Register a few users with different scores to test sorting
             const usersData = [
-                { username: 'leaderboarduser1', password: 'password', totalCashEarned: 10000 },
-                { username: 'leaderboarduser2', password: 'password', totalCashEarned: 20000 },
-                { username: 'leaderboarduser3', password: 'password', totalCashEarned: 15000 },
+                { username: 'leaderboarduser1', password: 'password123', totalCashEarned: 10000 },
+                { username: 'leaderboarduser2', password: 'password123', totalCashEarned: 20000 },
+                { username: 'leaderboarduser3', password: 'password123', totalCashEarned: 15000 },
             ];
             let savePromises = [];
 
@@ -201,7 +201,13 @@ describe('Game API', () => {
                                         .end((loginErr, loginRes) => {
                                             if(loginRes.statusCode !== 200) return reject(new Error('Login failed for ' + userData.username));
                                             const token = loginRes.body.token;
-                                            const gameSaveData = { gameModel: { totalCashEarned: userData.totalCashEarned }, prestigeDealers: [] };
+                                            const gameSaveData = { 
+                                                gameModel: { 
+                                                    cash: 1000,
+                                                    totalCashEarned: userData.totalCashEarned 
+                                                }, 
+                                                prestigeDealers: [] 
+                                            };
                                             request(app)
                                                 .post('/api/game/save')
                                                 .set('Authorization', `Bearer ${token}`)
